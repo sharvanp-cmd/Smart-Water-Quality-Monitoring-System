@@ -1,0 +1,99 @@
+#define TURB_PIN 34
+#define PH_PIN   35
+#define COND_PIN 32
+
+// === Calibration points ===
+float raw_acid   = 3055.0;
+float ph_acid    = 2.5;
+
+float raw_neutral = 2400.0;
+float ph_neutral  = 7.0;
+
+float raw_base   = 2030.0;
+float ph_base    = 10.0;
+
+int getAvg(int pin) {
+  long sum = 0;
+  for (int i = 0; i < 10; i++) {
+    sum += analogRead(pin);
+    delay(10);
+  }
+  return sum / 10;
+}
+
+float convertPH(int raw) {
+
+  float ph;
+
+  if (raw >= raw_neutral) {
+    // Acid → Neutral region
+    float slope = (ph_neutral - ph_acid) / (raw_neutral - raw_acid);
+    float intercept = ph_acid - slope * raw_acid;
+    ph = slope * raw + intercept;
+  } else {
+    // Neutral → Base region
+    float slope = (ph_base - ph_neutral) / (raw_base - raw_neutral);
+    float intercept = ph_neutral - slope * raw_neutral;
+    ph = slope * raw + intercept;
+  }
+
+  // Clamp
+  if (ph < 0) ph = 0;
+  if (ph > 14) ph = 14;
+
+  return ph;
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  analogReadResolution(12);
+
+  analogSetPinAttenuation(TURB_PIN, ADC_11db);
+  analogSetPinAttenuation(PH_PIN,   ADC_11db);
+  analogSetPinAttenuation(COND_PIN, ADC_11db);
+}
+
+void loop() {
+
+  int turb_raw = getAvg(TURB_PIN);
+  int ph_raw   = getAvg(PH_PIN);
+  int cond_raw = getAvg(COND_PIN);
+
+  float ph = convertPH(ph_raw);
+
+  String status = "";
+
+  if (ph < 3) {
+    status = "INDUSTRIAL CONTAMINATION";
+  }
+  else if (turb_raw >= 0 && turb_raw <= 1080) {
+    status = "SEWAGE CONTAMINATION";
+  }
+  else if (
+    turb_raw >= 1600 && turb_raw <= 1900 &&
+    ph >= 5 && ph <= 8.5
+  ) {
+    status = "CLEAN WATER";
+  }
+  else {
+    status = "UNCERTAIN";
+  }
+
+  // Output
+  Serial.print(turb_raw);
+  Serial.print(",");
+
+  Serial.print(ph_raw);
+  Serial.print(",");
+
+  Serial.print(ph, 2);
+  Serial.print(",");
+
+  Serial.print(cond_raw);
+  Serial.print(",");
+
+  Serial.println(status);
+
+  delay(1500);
+}

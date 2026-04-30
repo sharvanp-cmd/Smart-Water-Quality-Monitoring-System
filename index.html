@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Water Quality Dashboard</title>
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+
+<style>
+    body { background-color: #f8fafc; }
+    .chart-container { width: 100%; height: 300px; }
+    .graph-container { width: 100%; height: 400px; }
+</style>
+</head>
+
+<body class="text-slate-800 p-6 md:p-10 font-sans">
+
+<div class="max-w-7xl mx-auto">
+
+<header class="flex flex-col items-center mb-8 bg-white p-6 rounded-2xl shadow-sm border text-center">
+    <h1 class="text-3xl font-bold text-slate-900">Water Quality Monitor</h1>
+    <p class="text-slate-500 mt-1">Real-time ESP32 Sensor Data</p>
+
+    <div class="mt-6 flex flex-col items-center">
+        <div class="text-sm text-slate-500 font-semibold uppercase tracking-wider">
+            SYSTEM STATUS
+        </div>
+
+        <div id="statusBadge"
+            class="flex items-center justify-center px-6 py-3 mt-2 rounded-full text-lg font-extrabold
+                   bg-slate-100 text-slate-700 border border-slate-300 shadow-md transition-all duration-300">
+
+            <span id="statusDot" class="w-3 h-3 rounded-full mr-3 animate-pulse bg-slate-500"></span>
+            <span id="statusText">WAITING...</span>
+        </div>
+
+        <div id="lastUpdated" class="text-xs text-slate-400 mt-3">
+            Last Updated: --
+        </div>
+    </div>
+</header>
+
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+
+    <!-- TURBIDITY -->
+    <div class="bg-white p-6 rounded-2xl shadow-sm border flex flex-col items-center">
+        <h2 class="text-lg font-semibold">Turbidity</h2>
+        <div id="turbidityGauge" class="chart-container"></div>
+    </div>
+
+    <!-- PH -->
+    <div class="bg-white p-6 rounded-2xl shadow-sm border flex flex-col items-center">
+        <h2 class="text-lg font-semibold">pH Level</h2>
+
+        <div class="w-full px-4">
+            <div class="flex justify-between text-xs mb-1">
+                <span>0</span>
+                <span>7</span>
+                <span>14</span>
+            </div>
+
+            <div class="w-full h-6 bg-slate-200 rounded-full relative overflow-hidden">
+                <div class="absolute h-full bg-green-100"
+                     style="left: calc(6.5/14*100%); width: calc((8.5-6.5)/14*100%);">
+                </div>
+
+                <div id="phBar"
+                     class="absolute h-full w-1 bg-green-500 transition-all duration-500"
+                     style="left: 0%;">
+                </div>
+            </div>
+
+            <div class="text-center mt-3">
+                <span class="text-2xl font-bold">pH <span id="phValue">--</span></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- CONDUCTIVITY -->
+    <div class="bg-white p-6 rounded-2xl shadow-sm border flex flex-col items-center">
+        <h2 class="text-lg font-semibold">Conductivity</h2>
+        <div id="condGauge" class="chart-container"></div>
+    </div>
+
+</div>
+
+<!-- GRAPH -->
+<div class="bg-white p-6 rounded-2xl shadow-sm border">
+    <h2 class="text-xl font-bold mb-3">Live Trends</h2>
+    <div id="historyGraph" class="graph-container"></div>
+</div>
+
+</div>
+
+<script>
+const turbChart = echarts.init(document.getElementById('turbidityGauge'));
+const condChart = echarts.init(document.getElementById('condGauge'));
+const historyChart = echarts.init(document.getElementById('historyGraph'));
+
+const timeData = [], turbData = [], phData = [], condData = [];
+
+// GAUGE FUNCTION
+function gauge(max) {
+    return {
+        series: [{
+            type: 'gauge',
+            max: max,
+            progress: { show: true, width: 14 },
+            axisLine: { lineStyle: { width: 14 } },
+            detail: { formatter: '{value}', fontSize: 18 },
+            data: [{ value: 0 }]
+        }]
+    };
+}
+
+turbChart.setOption(gauge(4095));
+condChart.setOption(gauge(4095));
+
+// UPDATED GRAPH CONFIG
+historyChart.setOption({
+    tooltip: { trigger: 'axis' },
+
+    legend: { 
+        data: ['Turbidity', 'pH', 'Conductivity'] 
+    },
+
+    xAxis: { 
+        type: 'category', 
+        data: timeData 
+    },
+
+    yAxis: [
+        {
+            type: 'value',
+            position: 'left',
+            min: 0,
+            max: 4095
+        },
+        {
+            type: 'value',
+            name: 'pH',
+            position: 'right',
+            min: 0,
+            max: 14
+        }
+    ],
+
+    series: [
+        {
+            name: 'Turbidity',
+            type: 'line',
+            yAxisIndex: 0,
+            data: turbData
+        },
+        {
+            name: 'pH',
+            type: 'line',
+            yAxisIndex: 1,
+            data: phData
+        },
+        {
+            name: 'Conductivity',
+            type: 'line',
+            yAxisIndex: 0,
+            data: condData
+        }
+    ]
+});
+
+// FETCH
+async function fetchData() {
+    try {
+        const res = await fetch(`sensor_data.json?t=${Date.now()}`);
+        const data = await res.json();
+        const s = data.sensors;
+
+        let turb = s.turbidity.value;
+        let ph = s.ph.value;
+        let cond = s.conductivity.value;
+        let status = s.status;
+
+        turbChart.setOption({ series: [{ data: [{ value: turb }] }] });
+        condChart.setOption({ series: [{ data: [{ value: cond }] }] });
+
+        let percent = (ph / 14) * 100;
+        document.getElementById('phBar').style.left = `calc(${percent}% - 2px)`;
+        document.getElementById('phValue').innerText = ph.toFixed(2);
+
+        const badge = document.getElementById('statusBadge');
+        const dot = document.getElementById('statusDot');
+
+        badge.className = "flex items-center justify-center px-6 py-3 mt-2 rounded-full text-lg font-extrabold border shadow-md";
+
+        if (status === "CLEAN WATER") {
+            badge.classList.add("bg-green-100","text-green-700","border-green-300");
+            dot.className = "w-3 h-3 rounded-full bg-green-500 mr-3 animate-pulse";
+        }
+        else if (status === "SEWAGE CONTAMINATION") {
+            badge.classList.add("bg-yellow-200","text-yellow-900","border-yellow-400");
+            dot.className = "w-3 h-3 rounded-full bg-yellow-800 mr-3 animate-pulse";
+        }
+        else if (status === "INDUSTRIAL CONTAMINATION") {
+            badge.classList.add("bg-red-100","text-red-700","border-red-300");
+            dot.className = "w-3 h-3 rounded-full bg-red-500 mr-3 animate-pulse";
+        }
+        else {
+            badge.classList.add("bg-slate-100","text-slate-600","border-slate-300");
+            dot.className = "w-3 h-3 rounded-full bg-slate-500 mr-3 animate-pulse";
+        }
+
+        document.getElementById('statusText').innerText = status;
+        document.getElementById('lastUpdated').innerText = "Last Updated: " + data.last_updated;
+
+        let time = data.last_updated.split(" ")[1];
+
+        timeData.push(time);
+        turbData.push(turb);
+        phData.push(ph);
+        condData.push(cond);
+
+        if (timeData.length > 20) {
+            timeData.shift();
+            turbData.shift();
+            phData.shift();
+            condData.shift();
+        }
+
+        historyChart.setOption({
+            xAxis: { data: timeData },
+            series: [
+                { data: turbData },
+                { data: phData },
+                { data: condData }
+            ]
+        });
+
+    } catch (e) {
+        console.log(e);
+    }
+}
+
+setInterval(fetchData, 1500);
+fetchData();
+
+window.addEventListener('resize', () => {
+    turbChart.resize();
+    condChart.resize();
+    historyChart.resize();
+});
+</script>
+
+</body>
+</html>
